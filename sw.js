@@ -1,11 +1,12 @@
 /* 오프라인에서도 앱 껍데기는 열리도록 하는 최소한의 서비스 워커.
    네트워크 우선이라 새 버전을 올리면 즉시 반영된다. */
-const CACHE = "review-app-v1";
+const CACHE = "review-app-v2-half-stars";
 const SHELL = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
+  "./review-model.js",
   "./config.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",

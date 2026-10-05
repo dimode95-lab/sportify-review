@@ -147,6 +147,7 @@ main { padding: 4px 16px 96px; max-width: 560px; margin: 0 auto; }
 
 .review-input {
   flex: 1;
+  min-width: 0;
   background: var(--bg);
   border: 1px solid var(--card-border);
   border-radius: 10px;
@@ -196,6 +197,24 @@ main { padding: 4px 16px 96px; max-width: 560px; margin: 0 auto; }
 .history-item .song-title { font-size: 0.92rem; }
 .history-review { margin-top: 6px; font-size: 0.92rem; line-height: 1.5; }
 .history-date { color: var(--sub); font-size: 0.75rem; margin-top: 6px; }
+
+/* 손가락으로 반쪽을 고를 폭을 확보하고 숫자로도 선택 결과를 확인하게 한다. */
+.rating-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; font-size: 0.85rem; }
+.rating-value { font-variant-numeric: tabular-nums; }
+.rating-clear { border: none; background: none; color: var(--sub); padding: 8px 0 8px 8px; min-height: 44px; font: inherit; font-size: 0.78rem; cursor: pointer; }
+.rating-clear:disabled { opacity: 0.4; cursor: default; }
+.rating-stars { display: flex; gap: 2px; }
+.rating-star { flex: 0 1 48px; min-width: 0; min-height: 48px; padding: 4px; border: none; border-radius: 8px; background: transparent; color: var(--sub); font: inherit; font-size: 32px; line-height: 1.25; cursor: pointer; touch-action: manipulation; }
+.rating-star:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rating-star:disabled { cursor: default; }
+.star-glyph { display: inline-block; position: relative; color: var(--sub); }
+.star-fill { position: absolute; top: 0; left: 0; color: var(--accent); white-space: nowrap; overflow: hidden; }
+.rating-hint { color: var(--sub); font-size: 0.75rem; margin-top: 2px; }
+.history-rating { display: flex; align-items: center; gap: 2px; color: var(--sub); margin-top: 10px; font-size: 0.85rem; }
+.history-rating > span:last-child { margin-left: 6px; }
+.history-review { white-space: pre-wrap; overflow-wrap: anywhere; }
+.history-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.history-cancel { margin-top: 12px; min-height: 44px; }
 
 /* 빈 상태 */
 .empty { text-align: center; color: var(--sub); padding: 60px 12px; line-height: 1.7; }

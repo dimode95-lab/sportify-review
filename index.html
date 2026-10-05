@@ -25,7 +25,7 @@
     <section id="login-view" hidden>
       <div class="hero">
         <div class="hero-icon">♪</div>
-        <p>한 주 동안 새로 좋아요한 곡에<br />한 줄씩 감상을 남겨보세요.</p>
+        <p>한 주 동안 새로 좋아요한 곡에<br />별점과 한 줄 감상을 남겨보세요.</p>
         <button id="btn-login" class="primary">Spotify로 로그인</button>
         <p id="login-msg" class="sub-msg"></p>
       </div>
@@ -40,12 +40,12 @@
       <p id="summary" class="summary"></p>
       <div id="song-list"></div>
       <div id="empty-state" class="empty" hidden></div>
-      <button id="btn-save-all" class="primary sticky-save" hidden>작성한 한줄평 모두 저장</button>
+      <button id="btn-save-all" class="primary sticky-save" hidden>작성한 기록 모두 저장</button>
     </section>
 
     <!-- 지난 기록 -->
     <section id="history-view" hidden>
-      <p class="summary">최근 남긴 한줄평</p>
+      <p class="summary">최근 남긴 별점과 한줄평</p>
       <div id="history-list"></div>
       <button id="btn-back" class="ghost">← 이번 주 목록으로</button>
     </section>
@@ -82,6 +82,7 @@
   <div id="toast" class="toast" hidden></div>
 
   <script src="config.js"></script>
+  <script src="review-model.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

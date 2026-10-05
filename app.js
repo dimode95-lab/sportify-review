@@ -3,6 +3,7 @@
   "use strict";
 
   const CFG = window.APP_CONFIG;
+  const Review = window.ReviewModel;
   // 등록된 리다이렉트 URI와 정확히 일치해야 하므로 index.html은 떼고 계산한다
   const REDIRECT_URI = location.origin + location.pathname.replace(/index\.html$/, "");
   const MAX_PAGES = 20; // 1000곡. 이보다 많이 좋아요한 기간이면 잘렸다고 알려준다
@@ -22,6 +23,9 @@
 
   let demoMode = false;
   let currentSongs = []; // 화면에 떠 있는(아직 저장 안 된) 곡들
+  let saving = false;
+  let demoReviews = [];
+  let mainTotal = 0;
 
   /* ---------- 설정 ---------- */
 
@@ -47,17 +51,109 @@
      화면을 다시 그리거나 앱이 백그라운드에서 종료돼도 쓰던 글이 날아가지 않게 한다. */
 
   function getDrafts() {
-    try { return JSON.parse(localStorage.getItem(LS.drafts) || "{}"); } catch (e) { return {}; }
+    try {
+      const value = JSON.parse(localStorage.getItem(demoMode ? "rv_demo_drafts" : LS.drafts) || "{}");
+      return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    } catch (e) { return {}; }
   }
-  function setDraft(trackId, text) {
+  function setDraft(trackId, value) {
     const d = getDrafts();
-    if (text) d[trackId] = text; else delete d[trackId];
-    localStorage.setItem(LS.drafts, JSON.stringify(d));
+    // 수정 중 비운 입력도 남겨야 이전 평점이 뜻하지 않게 복원되지 않는다.
+    d[trackId] = Review.draft(value);
+    localStorage.setItem(demoMode ? "rv_demo_drafts" : LS.drafts, JSON.stringify(d));
   }
   function clearDrafts(trackIds) {
     const d = getDrafts();
     trackIds.forEach((id) => delete d[id]);
-    localStorage.setItem(LS.drafts, JSON.stringify(d));
+    localStorage.setItem(demoMode ? "rv_demo_drafts" : LS.drafts, JSON.stringify(d));
+  }
+
+  function draftKey(trackId, editing = false) { return editing ? "edit:" + trackId : trackId; }
+
+  function editorHtml() {
+    return `<div class="rating-heading"><span>내 평점 · <output class="rating-value" aria-live="polite">미평가</output></span><button type="button" class="rating-clear">평점 지우기</button></div>
+      <div class="rating-stars" role="group" aria-label="0.5점부터 5점까지 선택. 별의 왼쪽 반은 반 점, 오른쪽 반은 온 점. 방향키로 0.5점씩 조절">
+        ${[1, 2, 3, 4, 5].map((n) => `<button type="button" class="rating-star" data-star="${n}" aria-label="${n - 0.5}점 또는 ${n}점 선택" aria-pressed="false">☆</button>`).join("")}
+      </div><p class="rating-hint">별의 왼쪽은 반 점, 오른쪽은 온 점</p>
+      <div class="review-row"><textarea class="review-input" aria-label="한줄평 (선택)" rows="1" placeholder="한 줄 감상… (선택)" maxlength="300"></textarea><button class="save-btn" disabled>저장</button></div>`;
+  }
+
+  function editorValue(card) { return { review: card.querySelector(".review-input").value, rating: Review.rating(card._rating) }; }
+
+  function updateEditor(card) {
+    const value = editorValue(card);
+    card.querySelector(".rating-value").textContent = value.rating === null ? "미평가" : `${value.rating.toFixed(1)} / 5`;
+    const glyphs = Review.stars(value.rating);
+    card.querySelectorAll(".rating-star").forEach((button, i) => {
+      button.innerHTML = glyphs[i];
+      button.setAttribute("aria-pressed", String(i + 1 === Math.ceil(value.rating)));
+    });
+    card.querySelector(".rating-clear").disabled = saving || value.rating === null || card.classList.contains("saved");
+    card.querySelector(".save-btn").disabled = saving || !Review.hasContent(value) || card.classList.contains("saved");
+  }
+
+  function bindEditor(card, key, initial, onSave) {
+    const drafts = getDrafts();
+    const value = Review.draft(Object.prototype.hasOwnProperty.call(drafts, key) ? drafts[key] : initial);
+    const input = card.querySelector(".review-input");
+    card._rating = value.rating;
+    card._draftKey = key;
+    input.value = value.review;
+    const changed = () => {
+      setDraft(key, editorValue(card));
+      updateEditor(card);
+      input.style.height = "auto";
+      input.style.height = input.scrollHeight + "px";
+      updateSaveAll();
+    };
+    input.addEventListener("input", changed);
+    card.querySelectorAll(".rating-star").forEach((button) => {
+      button.addEventListener("click", (e) => {
+        const n = Number(button.dataset.star);
+        const rect = button.getBoundingClientRect();
+        card._rating = e.detail > 0 || e.pointerType ? Review.pointerRating(n, e.clientX, rect.left, rect.width) : n;
+        changed();
+      });
+      button.addEventListener("keydown", (e) => {
+        if (!["ArrowLeft", "ArrowDown", "ArrowRight", "ArrowUp", "Home", "End"].includes(e.key)) return;
+        e.preventDefault();
+        const step = ["ArrowLeft", "ArrowDown"].includes(e.key) ? -0.5 : 0.5;
+        card._rating = e.key === "Home" ? 0.5 : e.key === "End" ? 5 : Math.max(0.5, Math.min(5, (card._rating || 0) + step));
+        changed();
+      });
+    });
+    card.querySelector(".rating-clear").addEventListener("click", () => { card._rating = null; changed(); });
+    card.querySelector(".save-btn").addEventListener("click", onSave);
+    updateEditor(card);
+    if (input.value) { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; }
+  }
+
+  function setSaving(value) {
+    saving = value;
+    document.querySelectorAll(".song-card, .history-item.editing").forEach((card) => {
+      card.querySelectorAll("button, textarea").forEach((el) => { el.disabled = value || card.classList.contains("saved"); });
+      updateEditor(card);
+    });
+    ["btn-history", "btn-refresh", "btn-back", "btn-settings", "btn-open-settings"].forEach((id) => { $(id).disabled = value; });
+    document.querySelectorAll(".history-edit-btn").forEach((btn) => { btn.disabled = value; });
+    updateSaveAll();
+  }
+
+  async function persistReviews(payload) {
+    if (demoMode) {
+      payload.forEach((p) => {
+        const old = demoReviews.find((r) => r.track_id === p.track_id) || {};
+        const next = { ...old, ...p, track_name: p.name ?? old.track_name, spotify_url: p.url ?? old.spotify_url, saved_at: savedAtLocal() };
+        demoReviews = [next, ...demoReviews.filter((r) => r.track_id !== p.track_id)];
+      });
+      return payload.map((p) => p.track_id);
+    }
+    // 구버전 서버는 모르는 평점을 조용히 버리므로 전송 전에 지원 여부를 확인한다.
+    const server = await api("ping");
+    if (server.rating_step !== 0.5) throw new Error("저장 서버 업데이트가 필요해요. 입력 내용은 이 기기에 보관했어요.");
+    const result = await api("add", { reviews: payload });
+    if (!Array.isArray(result.saved_ids)) throw new Error("저장 확인을 받지 못했어요. 입력을 유지했으니 다시 시도해 주세요.");
+    return result.saved_ids;
   }
 
   /* ---------- 화면 유틸 ---------- */
@@ -90,6 +186,11 @@
     if (d <= 0) return "오늘";
     if (d === 1) return "어제";
     return `${d}일 전`;
+  }
+
+  function savedAtLocal() {
+    // 자정 무렵 수정한 기록도 서버와 같은 한국 날짜로 바로 표시한다.
+    return new Date(Date.now() + 9 * 3600e3).toISOString().replace("Z", "+09:00");
   }
 
   // 로그인이 풀린 게 아니라 잠깐 실패한 것들은 로그인 화면으로 보내지 않는다
@@ -296,12 +397,13 @@
   /* ---------- 메인 화면 ---------- */
 
   async function loadMain() {
+    if (saving) return;
     showLoading("이번 주 좋아요 곡을 불러오는 중…");
     const days = getSettings().days;
     try {
       const [likes, reviewed] = await Promise.all([
         demoMode ? Promise.resolve({ songs: DEMO_SONGS, truncated: false }) : fetchRecentLikes(days),
-        demoMode ? Promise.resolve({ ids: new Set(), remoteOk: true }) : fetchReviewedIds(),
+        demoMode ? Promise.resolve({ ids: new Set(demoReviews.map((r) => r.track_id)), remoteOk: true }) : fetchReviewedIds(),
       ]);
       const fresh = likes.songs.filter((s) => !reviewed.ids.has(s.track_id));
       currentSongs = fresh;
@@ -313,6 +415,7 @@
   }
 
   function renderMain(totalCount, fresh, days, remoteOk, truncated) {
+    mainTotal = totalCount;
     show("main");
     $("config-banner").hidden = apiConfigured() || demoMode;
 
@@ -321,7 +424,7 @@
     if (!remoteOk && !demoMode) notes.push("기록 서버 연결 안 됨");
     if (truncated) notes.push(`최근 ${MAX_PAGES * 50}곡까지만 표시`);
     $("summary").textContent = totalCount
-      ? `최근 ${days}일 새 좋아요 ${totalCount}곡 · 한줄평 완료 ${doneCount}곡` + (notes.length ? ` (${notes.join(", ")})` : "")
+      ? `최근 ${days}일 새 좋아요 ${totalCount}곡 · 기록 완료 ${doneCount}곡` + (notes.length ? ` (${notes.join(", ")})` : "")
       : "";
 
     const list = $("song-list");
@@ -331,14 +434,13 @@
     if (!fresh.length) {
       empty.hidden = false;
       empty.innerHTML = totalCount
-        ? "최근 좋아요한 곡에 전부 한줄평을 남겼어요 🎉"
+        ? "최근 좋아요한 곡에 전부 기록을 남겼어요 🎉"
         : `최근 ${days}일간 새로 좋아요한 곡이 없어요 🎧<br>⚙ 설정에서 기간을 늘려볼 수 있어요.`;
       $("btn-save-all").hidden = true;
       return;
     }
     empty.hidden = true;
 
-    const drafts = getDrafts();
     for (const song of fresh) {
       const card = document.createElement("div");
       card.className = "song-card";
@@ -354,37 +456,20 @@
           </div>
           <div class="song-when">${daysAgoLabel(song.added_at)}</div>
         </div>
-        <div class="review-row">
-          <textarea class="review-input" rows="1" placeholder="한 줄 감상…" maxlength="300"></textarea>
-          <button class="save-btn" disabled>저장</button>
-        </div>`;
-
-      const input = card.querySelector(".review-input");
-      const btn = card.querySelector(".save-btn");
-      const autosize = () => { input.style.height = "auto"; input.style.height = input.scrollHeight + "px"; };
-
-      input.value = drafts[song.track_id] || ""; // 쓰다 만 글 복원
-      btn.disabled = !input.value.trim();
-
-      input.addEventListener("input", () => {
-        btn.disabled = !input.value.trim();
-        autosize();
-        setDraft(song.track_id, input.value.trim());
-        updateSaveAll();
-      });
-      btn.addEventListener("click", () => saveReviews([song], card));
+        ${editorHtml()}`;
       list.appendChild(card);
-      if (input.value) autosize(); // DOM에 붙은 뒤라야 높이가 잡힌다
+      bindEditor(card, draftKey(song.track_id), null, () => saveReviews([song], card));
     }
     updateSaveAll();
   }
 
   function updateSaveAll() {
     const pending = [...document.querySelectorAll(".song-card:not(.saved)")]
-      .filter((c) => c.querySelector(".review-input").value.trim()).length;
+      .filter((c) => Review.hasContent(editorValue(c))).length;
     const btn = $("btn-save-all");
     btn.hidden = pending < 2;
-    btn.textContent = `작성한 한줄평 모두 저장 (${pending}곡)`;
+    btn.disabled = saving;
+    btn.textContent = `작성한 기록 모두 저장 (${pending}곡)`;
   }
 
   function cardFor(trackId) {
@@ -392,12 +477,13 @@
   }
 
   async function saveReviews(songs, singleCard) {
+    if (saving) return;
     const payload = [];
     for (const song of songs) {
       const card = singleCard || cardFor(song.track_id);
       if (!card || card.classList.contains("saved")) continue;
-      const text = card.querySelector(".review-input").value.trim();
-      if (!text) continue;
+      const value = editorValue(card);
+      if (!Review.hasContent(value)) continue;
       payload.push({
         track_id: song.track_id,
         name: song.name,
@@ -406,35 +492,28 @@
         release_date: song.release_date,
         added_at: song.added_at,
         url: song.url,
-        review: text,
+        review: value.review.trim(),
+        rating: value.rating,
       });
     }
     if (!payload.length) return;
 
-    if (demoMode) {
-      const ids = payload.map((p) => p.track_id);
-      clearDrafts(ids);
-      markSaved(ids);
-      toast("(데모) 저장된 셈 치기 완료");
-      return;
-    }
-
     try {
-      if (!apiConfigured()) { toast("먼저 ⚙ 설정에서 저장 서버를 연결해 주세요."); $("settings-dialog").showModal(); return; }
+      if (!demoMode && !apiConfigured()) { toast("먼저 ⚙ 설정에서 저장 서버를 연결해 주세요."); $("settings-dialog").showModal(); return; }
+      setSaving(true);
       const buttons = payload.map((p) => cardFor(p.track_id)).filter(Boolean).map((c) => c.querySelector(".save-btn"));
       buttons.forEach((b) => { b.disabled = true; b.textContent = "저장 중…"; });
-      const r = await api("add", { reviews: payload });
-      const ids = payload.map((p) => p.track_id);
-      addSubmitted(ids);
+      const confirmed = new Set(await persistReviews(payload));
+      const ids = payload.map((p) => p.track_id).filter((id) => confirmed.has(id));
+      if (!demoMode) addSubmitted(ids);
       clearDrafts(ids);
       markSaved(ids);
-      toast(`한줄평 ${(r.added || 0) + (r.updated || 0)}곡 저장 완료 ✓`);
+      toast(ids.length === payload.length ? `${demoMode ? "(데모) " : ""}기록 ${ids.length}곡 저장 완료 ✓` : `${ids.length}곡 저장됨. 나머지 입력은 유지했어요. 다시 저장해 주세요.`, 4000);
     } catch (e) {
-      document.querySelectorAll(".song-card:not(.saved) .save-btn").forEach((b) => {
-        b.textContent = "저장";
-        b.disabled = !b.closest(".song-card").querySelector(".review-input").value.trim();
-      });
       toast("저장 실패: " + friendlyError(e), 4000);
+    } finally {
+      document.querySelectorAll(".song-card:not(.saved) .save-btn").forEach((b) => { b.textContent = "저장"; });
+      setSaving(false);
     }
   }
 
@@ -443,7 +522,7 @@
       const card = cardFor(id);
       if (!card) continue;
       card.classList.add("saved");
-      card.querySelector(".review-input").disabled = true;
+      card.querySelectorAll("button, textarea").forEach((el) => { el.disabled = true; });
       const btn = card.querySelector(".save-btn");
       btn.disabled = true;
       btn.textContent = "✓ 저장됨";
@@ -451,40 +530,72 @@
     }
     const doneNow = document.querySelectorAll(".song-card.saved").length;
     const total = currentSongs.length;
-    if (doneNow >= total && total > 0) {
-      $("summary").textContent = `오늘 몫 끝! 한줄평 ${doneNow}곡 저장 완료 🎉`;
-    }
+    $("summary").textContent = doneNow >= total && total > 0
+      ? `오늘 몫 끝! 기록 ${mainTotal}곡 완료 🎉`
+      : `최근 ${getSettings().days}일 새 좋아요 ${mainTotal}곡 · 기록 완료 ${mainTotal - total + doneNow}곡`;
     updateSaveAll();
   }
 
   /* ---------- 지난 기록 ---------- */
 
   async function loadHistory() {
-    if (demoMode) { show("history"); $("history-list").innerHTML = `<p class="empty">데모 모드에서는 기록이 없어요.</p>`; return; }
-    if (!apiConfigured()) { toast("먼저 ⚙ 설정에서 저장 서버를 연결해 주세요."); return; }
+    if (saving) return;
+    if (!demoMode && !apiConfigured()) { toast("먼저 ⚙ 설정에서 저장 서버를 연결해 주세요."); return; }
     showLoading("지난 기록을 불러오는 중…");
     try {
-      const data = await api("list", { limit: 50 });
+      const data = demoMode ? { reviews: demoReviews } : await api("list", { limit: 50 });
       show("history");
       const list = $("history-list");
       list.innerHTML = "";
       if (!data.reviews.length) {
-        list.innerHTML = `<p class="empty">아직 저장된 한줄평이 없어요.</p>`;
+        list.innerHTML = `<p class="empty">아직 저장된 기록이 없어요.</p>`;
         return;
       }
       for (const r of data.reviews) {
         const div = document.createElement("div");
         div.className = "history-item";
-        div.innerHTML = `
-          <div class="song-title">${escapeHtml(r.track_name)} <span class="song-sub">— ${escapeHtml(r.artists)}</span></div>
-          <div class="history-review">${escapeHtml(r.review)}</div>
-          <div class="history-date">${escapeHtml(String(r.saved_at).slice(0, 10))}</div>`;
         list.appendChild(div);
+        renderHistoryItem(div, r);
       }
     } catch (e) {
       show("main");
       toast("기록 불러오기 실패: " + friendlyError(e), 4000);
     }
+  }
+
+  function renderHistoryItem(card, record) {
+    const rating = Review.rating(record.rating);
+    card.classList.remove("editing");
+    card.innerHTML = `<div class="song-title">${escapeHtml(record.track_name)} <span class="song-sub">— ${escapeHtml(record.artists)}</span></div>
+      <div class="history-rating">${rating === null ? "미평가" : Review.stars(rating).join("") + ` <span>${rating.toFixed(1)} / 5</span>`}</div>
+      <div class="history-review">${escapeHtml(record.review || "한줄평 없음")}</div>
+      <div class="history-footer"><div class="history-date">${escapeHtml(String(record.saved_at).slice(0, 10))}</div><button type="button" class="save-btn history-edit-btn">${rating === null ? "평점 추가 · 수정" : "수정"}</button></div>`;
+    card.querySelector(".history-edit-btn").addEventListener("click", () => {
+      if (saving) return;
+      card.classList.add("editing");
+      card.innerHTML = `<div class="song-title">${escapeHtml(record.track_name)} <span class="song-sub">— ${escapeHtml(record.artists)}</span></div>${editorHtml()}<button type="button" class="link-btn history-cancel">취소</button>`;
+      const key = draftKey(record.track_id, true);
+      bindEditor(card, key, { review: record.review, rating }, async () => {
+        if (saving) return;
+        const value = editorValue(card);
+        if (!Review.hasContent(value)) return;
+        try {
+          setSaving(true);
+          card.querySelector(".save-btn").textContent = "저장 중…";
+          // 곡 정보는 서버의 원본을 유지하고 사용자가 고친 두 항목만 전송한다.
+          const confirmed = await persistReviews([{ track_id: record.track_id, review: value.review.trim(), rating: value.rating }]);
+          if (!confirmed.includes(record.track_id)) throw new Error("저장이 확인되지 않았어요. 다시 시도해 주세요.");
+          clearDrafts([key]);
+          Object.assign(record, { review: value.review.trim(), rating: value.rating, saved_at: savedAtLocal() });
+          renderHistoryItem(card, record);
+          toast("기록을 수정했어요 ✓");
+        } catch (e) {
+          card.querySelector(".save-btn").textContent = "저장";
+          toast("저장 실패: " + friendlyError(e), 4000);
+        } finally { setSaving(false); }
+      });
+      card.querySelector(".history-cancel").addEventListener("click", () => { clearDrafts([key]); renderHistoryItem(card, record); });
+    });
   }
 
   /* ---------- 로그인 화면 ---------- */
